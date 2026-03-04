@@ -17,6 +17,7 @@ jobs:
       - name: Send Checkin Request
         id: checkin
         run: |
+          # 发送签到请求并获取响应
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             --max-time 30 \
             -H "User-Agent: Mozilla/5.0" \
@@ -24,26 +25,30 @@ jobs:
             -H "Referer: https://www.viewturbo.com/" \
             "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=")
           
+          # 解析HTTP状态码和响应体
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           
+          # 设置输出变量
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "body=$BODY" >> $GITHUB_OUTPUT
           
-          # 判断成功与否
+          # 判断签到结果（移除exit 1，避免终止流程）
           if [ "$HTTP_CODE" = "200" ]; then
             echo "result=✅ 成功" >> $GITHUB_OUTPUT
+            echo "checkin_status=success" >> $GITHUB_ENV
           else
             echo "result=❌ 失败" >> $GITHUB_OUTPUT
-            exit 1
+            echo "checkin_status=failure" >> $GITHUB_ENV
           fi
 
       - name: Send Email to QQ
-        if: always()
+        if: always()  # 确保无论前面步骤是否成功，都执行邮件发送
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.qq.com
           server_port: 465
+          secure: true  # 关键修复：465端口需要显式开启TLS加密
           username: ${{ secrets.QQ_EMAIL }}
           password: ${{ secrets.QQ_EMAIL_AUTH }}
           subject: "【签到】${{ steps.checkin.outputs.result }} - $(date +%m月%d日)"
@@ -52,8 +57,18 @@ jobs:
           html_body: |
             <h2>${{ steps.checkin.outputs.result }}</h2>
             <table border="1" cellpadding="10" style="border-collapse: collapse;">
-              <tr><td><b>执行时间</b></td><td>${{ github.run_id }}</td></tr>
+              <tr><td><b>执行时间</b></td><td>$(date "+%Y年%m月%d日 %H:%M:%S")</td></tr>
               <tr><td><b>HTTP 状态</b></td><td>${{ steps.checkin.outputs.http_code }}</td></tr>
               <tr><td><b>API 返回</b></td><td><pre>${{ steps.checkin.outputs.body }}</pre></td></tr>
+              <tr><td><b>运行日志</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">点击查看</a></td></tr>
             </table>
-            <p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">查看详细日志</a></p>
+
+      - name: Set Job Final Status
+        if: always()
+        run: |
+          # 根据签到结果设置Job最终状态（失败则退出码1）
+          if [ "${{ env.checkin_status }}" = "failure" ]; then
+            exit 1
+          else
+            exit 0
+          fi
