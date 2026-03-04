@@ -58,8 +58,8 @@ jobs:
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.qq.com
-          server_port: 465
-          secure: true  # 465端口必须开启TLS
+          server_port: 587
+          secure: false  # 465端口必须开启TLS
           username: ${{ secrets.QQ_EMAIL }}
           password: ${{ secrets.QQ_EMAIL_AUTH }}
           # 主题包含具体结果和时间（时区修正为东八区）
