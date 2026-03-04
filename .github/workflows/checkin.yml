@@ -1,8 +1,8 @@
-name: Daily Checkin
+name: Daily Checkin with Email
 
 on:
   schedule:
-    - cron: '1 2 * * *'  # 北京时间 10:01
+    - cron: '1 2 * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,46 +11,49 @@ jobs:
     timeout-minutes: 5
     
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Send Checkin Request
         id: checkin
         run: |
-          echo "开始签到: $(date)"
-          
-          # 发送请求并捕获响应
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             --max-time 30 \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            -H "User-Agent: Mozilla/5.0" \
             -H "Accept: application/json" \
             -H "Referer: https://www.viewturbo.com/" \
             "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=")
           
-          # 分离状态码和响应体
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "body=$BODY" >> $GITHUB_OUTPUT
           
-          echo "状态码: $HTTP_CODE"
-          echo "响应: $BODY"
+          # 判断成功与否
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "result=✅ 成功" >> $GITHUB_OUTPUT
+          else
+            echo "result=❌ 失败" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-      - name: Send Email Notification
-        if: always()  # 无论成功失败都发送
+      - name: Send Email to QQ
+        if: always()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.qq.com
           server_port: 465
           username: ${{ secrets.QQ_EMAIL }}
           password: ${{ secrets.QQ_EMAIL_AUTH }}
-          subject: "每日签到结果 - ${{ job.status }}"
+          subject: "【签到】${{ steps.checkin.outputs.result }} - $(date +%m月%d日)"
           to: 2079224061@qq.com
-          from: GitHub Actions
+          from: GitHub Actions <${{ secrets.QQ_EMAIL }}>
           html_body: |
-            <h3>签到执行报告</h3>
-            <p><strong>时间：</strong>${{ github.event.schedule || '手动触发' }}</p>
-            <p><strong>状态：</strong>${{ job.status }}</p>
-            <p><strong>HTTP 状态码：</strong>${{ steps.checkin.outputs.http_code }}</p>
-            <p><strong>API 响应：</strong></p>
-            <pre>${{ steps.checkin.outputs.body }}</pre>
-            <hr>
-            <p><small>自动发送 by GitHub Actions</small></p>
+            <h2>${{ steps.checkin.outputs.result }}</h2>
+            <table border="1" cellpadding="10" style="border-collapse: collapse;">
+              <tr><td><b>执行时间</b></td><td>${{ github.run_id }}</td></tr>
+              <tr><td><b>HTTP 状态</b></td><td>${{ steps.checkin.outputs.http_code }}</td></tr>
+              <tr><td><b>API 返回</b></td><td><pre>${{ steps.checkin.outputs.body }}</pre></td></tr>
+            </table>
+            <p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">查看详细日志</a></p>
