@@ -2,7 +2,7 @@ name: Daily Checkin
 
 on:
   schedule:
-    - cron: '1 2 * * *'  # 每天 UTC 02:01 = 北京时间 10:01
+    - cron: '1 2 * * *'  # 北京时间 10:01
   workflow_dispatch:
 
 jobs:
@@ -11,56 +11,46 @@ jobs:
     timeout-minutes: 5
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
       - name: Send Checkin Request
         id: checkin
         run: |
           echo "开始签到: $(date)"
           
-          # 发送请求并保存响应
+          # 发送请求并捕获响应
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-            -H "Accept: application/json, text/plain, */*" \
-            -H "Accept-Language: zh-CN,zh;q=0.9" \
-            -H "Referer: https://www.viewturbo.com/" \
-            -H "Origin: https://www.viewturbo.com" \
-            -H "Connection: keep-alive" \
             --max-time 30 \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            -H "Accept: application/json" \
+            -H "Referer: https://www.viewturbo.com/" \
             "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=")
           
-          # 分离响应体和状态码
+          # 分离状态码和响应体
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           
-          echo "状态码: $HTTP_CODE"
-          echo "响应: $BODY"
-          
-          # 设置输出变量
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "body=$BODY" >> $GITHUB_OUTPUT
           
-          # 检查是否成功
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "请求失败，状态码: $HTTP_CODE"
-            exit 1
-          fi
-          
-          echo "签到成功: $(date)"
-      
-      - name: Retry on failure
-        if: failure()
-        run: |
-          echo "第一次尝试失败，5秒后重试..."
-          sleep 5
-          
-          curl -X POST \
-            -H "User-Agent: Mozilla/5.0" \
-            -H "Referer: https://www.viewturbo.com/" \
-            "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo="
-      
-      - name: Send notification (optional)
-        if: always()
-        run: |
-          echo "签到流程结束，状态: ${{ job.status }}"
+          echo "状态码: $HTTP_CODE"
+          echo "响应: $BODY"
+
+      - name: Send Email Notification
+        if: always()  # 无论成功失败都发送
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.qq.com
+          server_port: 465
+          username: ${{ secrets.QQ_EMAIL }}
+          password: ${{ secrets.QQ_EMAIL_AUTH }}
+          subject: "每日签到结果 - ${{ job.status }}"
+          to: 2079224061@qq.com
+          from: GitHub Actions
+          html_body: |
+            <h3>签到执行报告</h3>
+            <p><strong>时间：</strong>${{ github.event.schedule || '手动触发' }}</p>
+            <p><strong>状态：</strong>${{ job.status }}</p>
+            <p><strong>HTTP 状态码：</strong>${{ steps.checkin.outputs.http_code }}</p>
+            <p><strong>API 响应：</strong></p>
+            <pre>${{ steps.checkin.outputs.body }}</pre>
+            <hr>
+            <p><small>自动发送 by GitHub Actions</small></p>
