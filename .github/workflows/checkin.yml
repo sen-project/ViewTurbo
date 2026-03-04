@@ -9,7 +9,7 @@ jobs:
   checkin:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,56 +17,69 @@ jobs:
       - name: Send Checkin Request
         id: checkin
         run: |
-          # 发送签到请求并获取响应
+          # 发送签到请求（保留所有原请求头）
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             --max-time 30 \
             -H "User-Agent: Mozilla/5.0" \
             -H "Accept: application/json" \
             -H "Referer: https://www.viewturbo.com/" \
             "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=")
-          
-          # 解析HTTP状态码和响应体
+
+          # 解析核心数据
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          # 设置输出变量
+          # 提取业务消息（兼容JSON解析失败的情况）
+          MSG=$(echo "$BODY" | jq -r '.msg' 2>/dev/null || echo "响应体非JSON: $BODY")
+
+          # 设置基础输出
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "body=$BODY" >> $GITHUB_OUTPUT
-          
-          # 判断签到结果（移除exit 1，避免终止流程）
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "result=✅ 成功" >> $GITHUB_OUTPUT
+
+          # 分场景标记结果（关键：兼容重复签到）
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            # 场景1：接口通信失败
+            echo "result=❌ 接口通信失败" >> $GITHUB_OUTPUT
+            echo "detail=HTTP状态码: $HTTP_CODE" >> $GITHUB_OUTPUT
+            echo "checkin_status=failure" >> $GITHUB_ENV
+          elif echo "$BODY" | jq -e '.code == 0' 2>/dev/null; then
+            # 场景2：签到成功（假设code=0为成功，可根据实际调整）
+            echo "result=✅ 签到成功" >> $GITHUB_OUTPUT
+            echo "detail=$MSG" >> $GITHUB_OUTPUT
             echo "checkin_status=success" >> $GITHUB_ENV
           else
-            echo "result=❌ 失败" >> $GITHUB_OUTPUT
-            echo "checkin_status=failure" >> $GITHUB_ENV
+            # 场景3：业务失败（如重复签到、token过期）
+            echo "result=ℹ️ 业务执行完成" >> $GITHUB_OUTPUT
+            echo "detail=$MSG" >> $GITHUB_OUTPUT
+            echo "checkin_status=success" >> $GITHUB_ENV
           fi
 
       - name: Send Email to QQ
-        if: always()  # 确保无论前面步骤是否成功，都执行邮件发送
+        if: always()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.qq.com
           server_port: 465
-          secure: true  # 关键修复：465端口需要显式开启TLS加密
+          secure: true  # 465端口必须开启TLS
           username: ${{ secrets.QQ_EMAIL }}
           password: ${{ secrets.QQ_EMAIL_AUTH }}
-          subject: "【签到】${{ steps.checkin.outputs.result }} - $(date +%m月%d日)"
+          # 主题包含具体结果和时间（时区修正为东八区）
+          subject: "【签到】${{ steps.checkin.outputs.result }} - $(date -d '+8 hours' '+%Y年%m月%d日 %H:%M')"
           to: 2079224061@qq.com
           from: GitHub Actions <${{ secrets.QQ_EMAIL }}>
           html_body: |
-            <h2>${{ steps.checkin.outputs.result }}</h2>
-            <table border="1" cellpadding="10" style="border-collapse: collapse;">
-              <tr><td><b>执行时间</b></td><td>$(date "+%Y年%m月%d日 %H:%M:%S")</td></tr>
-              <tr><td><b>HTTP 状态</b></td><td>${{ steps.checkin.outputs.http_code }}</td></tr>
-              <tr><td><b>API 返回</b></td><td><pre>${{ steps.checkin.outputs.body }}</pre></td></tr>
-              <tr><td><b>运行日志</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">点击查看</a></td></tr>
+            <h2>签到结果：${{ steps.checkin.outputs.result }}</h2>
+            <table border="1" cellpadding="10" style="border-collapse: collapse; width: 100%;">
+              <tr><td><b>执行时间（北京时间）</b></td><td>$(date -d '+8 hours' '+%Y年%m月%d日 %H:%M:%S')</td></tr>
+              <tr><td><b>HTTP 状态码</b></td><td>${{ steps.checkin.outputs.http_code }}</td></tr>
+              <tr><td><b>详细说明</b></td><td>${{ steps.checkin.outputs.detail }}</td></tr>
+              <tr><td><b>接口完整返回</b></td><td><pre style="white-space: pre-wrap; word-break: break-all;">${{ steps.checkin.outputs.body }}</pre></td></tr>
+              <tr><td><b>GitHub 日志</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">点击查看</a></td></tr>
             </table>
 
       - name: Set Job Final Status
         if: always()
         run: |
-          # 根据签到结果设置Job最终状态（失败则退出码1）
+          # 仅当接口通信失败时，标记Job为失败
           if [ "${{ env.checkin_status }}" = "failure" ]; then
             exit 1
           else
