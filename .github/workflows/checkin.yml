@@ -1,0 +1,26 @@
+name: Daily Checkin
+
+on:
+  # 定时触发：每天北京时间 10:01（UTC 02:01）
+  schedule:
+    - cron: '1 2 * * *'
+  
+  # 手动触发（方便测试）
+  workflow_dispatch:
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Send Checkin Request
+        run: |
+          curl -X POST \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            -H "Accept: application/json, text/plain, */*" \
+            -H "Referer: https://www.viewturbo.com/" \
+            -H "Origin: https://www.viewturbo.com" \
+            "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo="
+
+      - name: Show Current Time
+        run: echo "Checkin completed at $(date)"
