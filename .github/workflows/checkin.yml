@@ -75,7 +75,19 @@ jobs:
               <tr><td><b>接口完整返回</b></td><td><pre style="white-space: pre-wrap; word-break: break-all;">${{ steps.checkin.outputs.body }}</pre></td></tr>
               <tr><td><b>GitHub 日志</b></td><td><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">点击查看</a></td></tr>
             </table>
-
+      - name: Debug - Check if mail step ran and show logs hint
+        if: always()
+        run: |
+          echo "✅ Mail step 已執行完畢（無論成功或失敗）"
+          echo "請向上翻看 'Send Email to QQ' 這一步的完整日誌"
+          echo "重點檢查是否有以下關鍵字："
+          echo "  - 'Failed to connect'"
+          echo "  - 'Authentication failed'"
+          echo "  - 'Connection timed out'"
+          echo "  - 'EOF during SSL handshake'"
+          echo "  - '535' 或 '550' 等 SMTP 錯誤碼"
+          echo ""
+          echo "如果這一步有輸出，但上面 mail step 完全沒有任何錯誤訊息 → 代表 action 認為發送成功了（但可能被郵箱攔截）"
       - name: Set Job Final Status
         if: always()
         run: |
