@@ -1,8 +1,8 @@
-name: Daily Checkin with Email
+name: Daily Checkin with PushPlus
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/15 * * * *'          # 测试用，每15分钟一次；稳定后可改回 '1 2 * * *'（每天 UTC 02:01，北京时间10:01）
   workflow_dispatch:
 
 jobs:
@@ -24,22 +24,16 @@ jobs:
       - name: Check Secrets
         run: |
           echo "=== 步骤：检查 Secrets ==="
-          if [ -z "${{ secrets.QQ_EMAIL }}" ]; then
-            echo "❌ QQ_EMAIL 未设置"
-          else
-            echo "✅ QQ_EMAIL 已设置: ${{ secrets.QQ_EMAIL }}"
-          fi
-          
-          if [ -z "${{ secrets.QQ_EMAIL_AUTH }}" ]; then
-            echo "❌ QQ_EMAIL_AUTH 未设置"
-          else
-            echo "✅ QQ_EMAIL_AUTH 已设置 (长度: ${#${{ secrets.QQ_EMAIL_AUTH }}})"
-          fi
-          
           if [ -z "${{ secrets.CHECKIN_TOKEN }}" ]; then
             echo "❌ CHECKIN_TOKEN 未设置"
           else
             echo "✅ CHECKIN_TOKEN 已设置 (长度: ${#${{ secrets.CHECKIN_TOKEN }}})"
+          fi
+
+          if [ -z "${{ secrets.PUSHPLUS_TOKEN }}" ]; then
+            echo "❌ PUSHPLUS_TOKEN 未设置（微信推送将失败）"
+          else
+            echo "✅ PUSHPLUS_TOKEN 已设置"
           fi
           echo "=== Secrets 检查完成 ==="
 
@@ -50,49 +44,49 @@ jobs:
           echo "当前时间 (UTC): $(date)"
           echo "当前时间 (北京时间): $(date -d '+8 hours' '+%Y-%m-%d %H:%M:%S')"
           echo ""
-          
-          echo "请求 URL: https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=***&lang=hk&code=Others&deviceinfo="
+
+          echo "请求 URL: https://api.viewturbo.com/appuser/checkin?...&token=***..."
           echo "请求方法: POST"
           echo ""
-          
+
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             --max-time 30 \
             -H "User-Agent: Mozilla/5.0" \
             -H "Accept: application/json" \
             -H "Referer: https://www.viewturbo.com/" \
             "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=" 2>&1)
-          
+
           CURL_EXIT=$?
           echo "curl 退出码: $CURL_EXIT"
-          
+
           if [ $CURL_EXIT -ne 0 ]; then
             echo "❌ curl 执行失败，错误码: $CURL_EXIT"
             echo "原始响应: $RESPONSE"
             exit 1
           fi
-          
+
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          
+
           echo ""
           echo "HTTP 状态码: $HTTP_CODE"
           echo "响应体: $BODY"
           echo ""
-          
-          # 解析 msg
+
+          # 解析 msg 和 code
           MSG=$(echo "$BODY" | jq -r '.msg // "无msg字段"' 2>/dev/null)
           CODE=$(echo "$BODY" | jq -r '.code // "无code字段"' 2>/dev/null)
-          
+
           echo "解析结果:"
-          echo "  code: $CODE"
-          echo "  msg: $MSG"
+          echo " code: $CODE"
+          echo " msg: $MSG"
           echo ""
-          
+
           # 设置输出
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "body=$BODY" >> $GITHUB_OUTPUT
           echo "msg=$MSG" >> $GITHUB_OUTPUT
-          
+
           # 判断结果
           if [ "$HTTP_CODE" -ne 200 ]; then
             echo "❌ 接口通信失败 (HTTP != 200)"
@@ -110,90 +104,41 @@ jobs:
             echo "detail=$MSG" >> $GITHUB_OUTPUT
             echo "checkin_status=success" >> $GITHUB_ENV
           fi
-          
+
           echo "=== 签到请求完成 ==="
 
-      - name: Prepare Email Content
-        if: always()
-        id: email_prep
-        run: |
-          echo "=== 步骤：准备邮件内容 ==="
-          
-          RESULT="${{ steps.checkin.outputs.result }}"
-          HTTP_CODE="${{ steps.checkin.outputs.http_code }}"
-          DETAIL="${{ steps.checkin.outputs.detail }}"
-          BODY="${{ steps.checkin.outputs.body }}"
-          MSG="${{ steps.checkin.outputs.msg }}"
-          
-          echo "邮件变量:"
-          echo "  RESULT: $RESULT"
-          echo "  HTTP_CODE: $HTTP_CODE"
-          echo "  DETAIL: $DETAIL"
-          echo "  MSG: $MSG"
-          echo "  BODY长度: ${#BODY}"
-          
-          # 构建邮件主题（避免特殊字符问题）
-          SUBJECT="【签到】${RESULT} - $(date +%m月%d日)"
-          echo "邮件主题: $SUBJECT"
-          echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
-          
-          echo "=== 邮件内容准备完成 ==="
-
-      - name: Send Email to QQ
-        if: always()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.qq.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.QQ_EMAIL }}
-          password: ${{ secrets.QQ_EMAIL_AUTH }}
-          subject: ${{ steps.email_prep.outputs.subject }}
-          to: 2079224061@qq.com
-          from: GitHub Actions <${{ secrets.QQ_EMAIL }}>
-          html_body: |
-            <h2>${{ steps.checkin.outputs.result }}</h2>
-            <p><b>执行时间:</b> ${{ github.run_started_at }}</p>
-            <p><b>HTTP 状态码:</b> ${{ steps.checkin.outputs.http_code }}</p>
-            <p><b>详细消息:</b> ${{ steps.checkin.outputs.msg }}</p>
-            <p><b>完整响应:</b></p>
-            <pre>${{ steps.checkin.outputs.body }}</pre>
-            <p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">查看 GitHub 日志</a></p>
-
-      - name: Check Email Step Result
+      - name: Send Notification via PushPlus
         if: always()
         run: |
-          echo "=== 步骤：检查邮件发送结果 ==="
-          echo "邮件步骤的上一个结论: ${{ steps.checkin.conclusion }}"
-          echo "邮件步骤的输出: ${{ steps.checkin.outputs }}"
-          echo ""
-          echo "如果上面没有显示 'Send Email to QQ' 的错误信息，"
-          echo "说明 action-send-mail 认为发送成功了。"
-          echo ""
-          echo "请检查:"
-          echo "  1. QQ 邮箱收件箱"
-          echo "  2. QQ 邮箱垃圾箱"
-          echo "  3. QQ 邮箱订阅邮件文件夹"
-          echo ""
-          echo "如果都没收到，可能是:"
-          echo "  - QQ 邮箱拦截了 GitHub 的邮件"
-          echo "  - SMTP 认证失败（但 action 没报错）"
-          echo "  - 邮件被延迟（通常几分钟内到达）"
-          echo "=== 检查完成 ==="
+          echo "=== 步骤：通过 PushPlus 发送微信通知 ==="
 
-      - name: Test SMTP Connection
-        if: always()
-        run: |
-          echo "=== 步骤：测试 SMTP 连接 ==="
-          echo "测试连接到 smtp.qq.com:465 ..."
-          
-          # 使用 openssl 测试 SSL 连接
-          echo "Q" | timeout 5 openssl s_client -connect smtp.qq.com:465 2>&1 | head -20 || echo "连接测试完成或超时"
-          
-          echo ""
-          echo "如果上面显示 'CONNECTED' 和证书信息，说明网络连通。"
-          echo "如果显示错误，可能是网络或防火墙问题。"
-          echo "=== SMTP 测试完成 ==="
+          # 构建标题和内容
+          TITLE="签到结果 - $(date +%m月%d日) ${{ steps.checkin.outputs.result }}"
+
+          CONTENT="执行时间: ${{ github.run_started_at }}\n\
+          签到状态: ${{ steps.checkin.outputs.result }}\n\
+          详细消息: ${{ steps.checkin.outputs.msg }}\n\
+          HTTP 状态码: ${{ steps.checkin.outputs.http_code }}\n\
+          完整响应: ${{ steps.checkin.outputs.body }}\n\
+          查看完整日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # 发送到 PushPlus
+          RESPONSE=$(curl -s -X POST "http://www.pushplus.plus/send" \
+            -d token="${{ secrets.PUSHPLUS_TOKEN }}" \
+            -d title="${TITLE}" \
+            -d content="${CONTENT}" \
+            -d template="txt")
+
+          echo "PushPlus API 响应: $RESPONSE"
+
+          if echo "$RESPONSE" | grep -q '"code":200'; then
+            echo "✅ PushPlus 推送成功"
+          else
+            echo "❌ PushPlus 推送失败，请检查 Token 或网络"
+            echo "$RESPONSE"
+          fi
+
+          echo "=== 通知发送完成 ==="
 
       - name: Final Status
         if: always()
@@ -201,7 +146,7 @@ jobs:
           echo "=== 最终状态 ==="
           echo "checkin_status: ${{ env.checkin_status }}"
           echo "job 状态: ${{ job.status }}"
-          
+
           if [ "${{ env.checkin_status }}" = "failure" ]; then
             echo "标记为失败"
             exit 1
