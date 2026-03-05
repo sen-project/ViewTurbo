@@ -107,34 +107,38 @@ jobs:
 
           echo "=== 签到请求完成 ==="
 
-      - name: Send Notification via PushPlus
+            - name: Send Notification via PushPlus
         if: always()
         run: |
           echo "=== 步骤：通过 PushPlus 发送微信通知 ==="
 
-          # 构建标题和内容
+          # 构建标题
           TITLE="签到结果 - $(date +%m月%d日) ${{ steps.checkin.outputs.result }}"
 
-          CONTENT="执行时间: ${{ github.run_started_at }}\n\
-          签到状态: ${{ steps.checkin.outputs.result }}\n\
-          详细消息: ${{ steps.checkin.outputs.msg }}\n\
-          HTTP 状态码: ${{ steps.checkin.outputs.http_code }}\n\
-          完整响应: ${{ steps.checkin.outputs.body }}\n\
-          查看完整日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # 用 heredoc 安全构建多行内容（避免 \n 解析问题）
+          CONTENT=$(cat <<EOF
+          执行时间: ${{ github.run_started_at }}
+          签到状态: ${{ steps.checkin.outputs.result }}
+          详细消息: ${{ steps.checkin.outputs.msg }}
+          HTTP 状态码: ${{ steps.checkin.outputs.http_code }}
+          完整响应: ${{ steps.checkin.outputs.body }}
+          查看完整日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
 
-          # 发送到 PushPlus
+          # 发送
           RESPONSE=$(curl -s -X POST "http://www.pushplus.plus/send" \
-            -d token="${{ secrets.PUSHPLUS_TOKEN }}" \
-            -d title="${TITLE}" \
-            -d content="${CONTENT}" \
-            -d template="txt")
+            -d "token=${{ secrets.PUSHPLUS_TOKEN }}" \
+            -d "title=${TITLE}" \
+            -d "content=${CONTENT}" \
+            -d "template=txt")
 
           echo "PushPlus API 响应: $RESPONSE"
 
           if echo "$RESPONSE" | grep -q '"code":200'; then
             echo "✅ PushPlus 推送成功"
           else
-            echo "❌ PushPlus 推送失败，请检查 Token 或网络"
+            echo "❌ PushPlus 推送失败，请检查 Token、实名认证或网络"
             echo "$RESPONSE"
           fi
 
