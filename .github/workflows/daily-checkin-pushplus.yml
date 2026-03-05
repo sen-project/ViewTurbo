@@ -2,7 +2,7 @@ name: Daily Checkin with PushPlus
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 测试，每15分钟；稳定后改 '1 2 * * *'
+    - cron: '1 2 * * *'  # 测试，每15分钟；稳定后改 '1 2 * * *'
   workflow_dispatch:
 
 jobs:
