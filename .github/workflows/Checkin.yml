@@ -1,0 +1,89 @@
+name: Daily Checkin with PushPlus
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 测试，每15分钟；稳定后改 '1 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y jq
+
+      - name: Check Secrets
+        run: |
+          echo "CHECKIN_TOKEN: ${{ secrets.CHECKIN_TOKEN != '' && '已设置' || '未设置' }}"
+          echo "PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN != '' && '已设置' || '未设置' }}"
+
+      - name: Send Checkin Request
+        id: checkin
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            --max-time 30 \
+            -H "User-Agent: Mozilla/5.0" \
+            -H "Accept: application/json" \
+            -H "Referer: https://www.viewturbo.com/" \
+            "https://api.viewturbo.com/appuser/checkin?platform=web&cur_version=0.0.0&token=${{ secrets.CHECKIN_TOKEN }}&lang=hk&code=Others&deviceinfo=")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          MSG=$(echo "$BODY" | jq -r '.msg // "无msg"' 2>/dev/null || echo "解析失败")
+          CODE=$(echo "$BODY" | jq -r '.code // "无code"' 2>/dev/null || echo "解析失败")
+
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "body=$BODY" >> $GITHUB_OUTPUT
+          echo "msg=$MSG" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "result=失败: HTTP $HTTP_CODE" >> $GITHUB_OUTPUT
+            echo "checkin_status=failure" >> $GITHUB_ENV
+          elif [ "$CODE" = "0" ]; then
+            echo "result=成功" >> $GITHUB_OUTPUT
+            echo "checkin_status=success" >> $GITHUB_ENV
+          else
+            echo "result=$MSG (code=$CODE)" >> $GITHUB_OUTPUT
+            echo "checkin_status=success" >> $GITHUB_ENV
+          fi
+
+      - name: Send Notification via PushPlus
+        if: always()
+        run: |
+          TITLE="签到结果 - $(date +%m月%d日) ${{ steps.checkin.outputs.result }}"
+
+          CONTENT=$(cat <<EOF
+          执行时间: ${{ github.run_started_at }}
+          签到状态: ${{ steps.checkin.outputs.result }}
+          详细消息: ${{ steps.checkin.outputs.msg }}
+          HTTP 状态码: ${{ steps.checkin.outputs.http_code }}
+          响应体: ${{ steps.checkin.outputs.body }}
+          日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+
+          RESPONSE=$(curl -s -X POST "http://www.pushplus.plus/send" \
+            -d token="${{ secrets.PUSHPLUS_TOKEN }}" \
+            -d title="$TITLE" \
+            -d content="$CONTENT" \
+            -d template=txt)
+
+          echo "PushPlus 响应: $RESPONSE"
+
+          if echo "$RESPONSE" | grep -q '"code":200'; then
+            echo "推送成功"
+          else
+            echo "推送失败: $RESPONSE"
+          fi
+
+      - name: Final Status
+        if: always()
+        run: |
+          if [ "${{ env.checkin_status }}" = "failure" ]; then exit 1; fi
